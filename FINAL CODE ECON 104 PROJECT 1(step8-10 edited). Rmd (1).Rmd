@@ -1,0 +1,201 @@
+---
+title: "ECON 104 PROJECT 1"
+author: "Karina"
+date: "2026-04-17"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## 1: 
+```{r 2.1, echo=TRUE}
+library(AER)
+library(dplyr)
+library(car)
+library(MASS)
+library(lmtest)
+library(sandwich)
+data("CPS1985", package = "AER")
+data <- CPS1985
+str(data)
+data <- na.omit(data)
+```
+
+## 2:
+```{r 2.2, echo=TRUE}
+set.seed(123)
+
+n <- nrow(data)
+
+train_index <- sample(seq_len(n), size = floor(0.8 * n))
+
+train <- data[train_index, ]
+test  <- data[-train_index, ]
+```
+
+```{r 2.3, echo=TRUE}
+train$region     <- as.factor(train$region)
+train$gender     <- as.factor(train$gender)
+train$union      <- as.factor(train$union)
+train$married    <- as.factor(train$married)
+train$ethnicity  <- as.factor(train$ethnicity)
+train$occupation <- as.factor(train$occupation)
+train$sector     <- as.factor(train$sector)
+
+test$region     <- as.factor(test$region)
+test$gender     <- as.factor(test$gender)
+test$union      <- as.factor(test$union)
+test$married    <- as.factor(test$married)
+test$ethnicity  <- as.factor(test$ethnicity)
+test$occupation <- as.factor(test$occupation)
+test$sector     <- as.factor(test$sector)
+```
+
+## 3:
+```{r 3.1, echo=TRUE}
+summary(train[, c("wage", "education", "experience", "age")])
+```
+```{r 3.2, echo=TRUE}
+hist(train$wage,
+     main = "Distribution of Wage",
+     xlab = "Wage")
+```
+```{r 3.3, echo=TRUE}
+boxplot(wage ~ gender, data = train,
+        main = "Wage by Gender",
+        xlab = "Gender",
+        ylab = "Wage")
+```
+```{r 3.4, echo=TRUE}
+plot(train$education, train$wage,
+     main = "Education vs Wage",
+     xlab = "Education",
+     ylab = "Wage",
+     pch = 20)
+```
+
+```{r 3.5, echo=TRUE}
+cor(train[, c("education", "experience", "age")])
+```
+```{r 3.6, echo=TRUE}
+table(train$gender)
+table(train$union)
+
+boxplot(wage ~ gender, data = train)
+boxplot(wage ~ union, data = train)
+```
+## 4:
+```{r 4, echo=TRUE}
+model_baseline <- lm(wage ~ education + experience + age + region + gender + union + married + ethnicity + occupation + sector, data = train)
+summary(model_baseline)
+```
+## 5:
+```{r 5.1, echo=TRUE}
+vif(model_baseline)
+```
+high multicollinearity between edu, exp, age as above threshold of 10 -> age dropped in new vif model
+
+```{r 5.2, echo=TRUE}
+model_vif <- lm(wage ~ education + experience + region + gender + union + married + ethnicity + occupation + sector,
+                data = train)
+
+vif(model_vif)
+```
+## 6:
+```{r 6.1, echo=TRUE}
+stepAIC(model_baseline)
+```
+```{r 6.2, echo=TRUE}
+model_AIC <-lm(wage ~ education + experience + gender + union + occupation , data = train)
+
+summary(model_AIC)
+```
+```{r 6.3, echo=TRUE}
+comparison_table <- data.frame(
+  Model = c("Baseline", "VIF_trimmed", "AIC_selected"),
+  
+  AIC = c(AIC(model_baseline), AIC(model_vif), AIC(model_AIC)),
+  
+  BIC = c(BIC(model_baseline), BIC(model_vif), BIC(model_AIC)),
+  
+  Adj_R2 = c(summary(model_baseline)$adj.r.squared,
+             summary(model_vif)$adj.r.squared,
+             summary(model_AIC)$adj.r.squared)
+)
+
+comparison_table
+```
+notes: AIC selected best model bc AIC and BIC lowest, age removed in both VIF and AIC, reinforcing multicollinearity
+
+## 7:
+```{r 7.1, echo=TRUE}
+plot(model_AIC$fitted.values, resid(model_AIC), 
+     main = "Residual vs Fitted",
+     xlab = "Fitted Values",
+     ylab = "Residuals",
+     pch = 20)
+abline(h=0)
+```
+```{r 7.2, echo=TRUE}
+resettest(model_AIC, power = 2)
+```
+## 8:
+
+The residuals-versus-fitted plot suggests that the spread of the residuals increases as the fitted values rise, which is consistent with heteroskedasticity. Because this pattern appears to be a general increase in variance rather than a clear break between two groups, so BP test was selected to detect for heteroskedasticity.
+
+```{r 8.1, echo=TRUE}
+bptest(model_AIC)
+```
+Heteroskedasticity present, robust standard errors was used instead of log transformation since RESET test didn't indicates model misspecification.
+
+```{r 8.2, echo=TRUE}
+robust_results <-coeftest(model_AIC, vcov = vcovHC(model_AIC, type = "HC1"))
+print (robust_results)
+
+summary(model_AIC)
+```
+After the correction, the significance of the coefficients did not change, but noticed an increase in the standard errors of all the coefficients. Therefore our inferences should be more conservative than if homoskedasticity held.
+
+## 9:
+No need for step 9: While economic theory suggests that wages may exhibit diminishing returns to experience, which could be modeled using a quadratic term, the RESET test does not indicate any functional form misspecification. Therefore, no additional nonlinear terms are included, and the Step 6 model is retained.
+
+Final model: AIC model
+
+## 10:
+In-sample MAE and MSE are 3.055 and 18.688, while test-set MAE and MSE are 3.039 and 15.842.
+
+The out-of-sample errors are very similar to, and in this case slightly smaller than, the in-sample errors. Since the test errors are not larger than the training errors, there is no clear sign of overfitting.
+
+```{r 10, echo=TRUE}
+test_prediction <- predict(model_AIC, newdata = test)
+
+mae <- mean(abs(test$wage - test_prediction))
+mae
+
+mse <- mean((test$wage - test_prediction)^2)
+mse
+#in-sample mse/mae for comparison
+train_prediction <- predict(model_AIC, newdata = train)
+
+in_sample_mae <- mean(abs(train$wage - train_prediction))
+in_sample_mae
+
+in_sample_mse <- mean((train$wage - train_prediction)^2)
+in_sample_mse
+```
+
+
+AI Usage log:
+Step 3: Excluding categorical variables in 5 number summary
+I originally used summary(train) to generate the 5 number summary but it included the categorical variables as well. I asked Chat GPT to figure out how to exclude the categorical variables in 5 number summary.
+
+Step 6: Comparison table
+I didn't know how to extract the AIC, BIC, adjusted R squared values for every model and make it into a comparison table. I originally turned to online R resources but many required additional packages or were too complicated. ChatGPT was used to provide guidance on what command would be most suitable for my needs.
+
+AI Reflection:
+As I mainly used AI to help figure out how to code specific things, the AI would often be correct after I described the problem to them. However, if I submitted simple prompts like “How do I make a comparison table in R,” the code it gave me would not be suitable for my needs for this project. I had to be a lot more specific for it to be helpful. For the 5 number summary case, AI gave me an overly long code suggestion on how to exclude the categorical variables. While it might not necessarily be wrong, I didn’t like how AI’s suggestions were often overly long and overly complicated, so I would turn to online sources instead and only used AI as a very last resort.
+
+I also asked ChatGPT to critique my AIC-selected model. It responded that the model "appeared well-specified, with no evidence of functional form misspecification based on the RESET test", and that "Multicollinearity had been addressed through VIF trimming". I agreed with this because it matched the results I found from my RESET test and VIF analysis, and it supported my decision to keep the AIC model as the final model without adding additional terms.
+
