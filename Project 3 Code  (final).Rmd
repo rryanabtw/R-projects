@@ -1,0 +1,254 @@
+---
+title: "Econ 104 Project 3"
+author: "Karina Chan, Jessie Yu Ying Chan, Ryan Chang, Cris Veerkamp"
+date: "2026-05-28"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+rm(list = ls())
+
+library(AER)     
+library(dplyr)   
+library(ggplot2)  
+library(plm)        
+library(knitr) 
+library(stargazer)
+library(lmtest)
+library(sandwich)
+```
+# 1(a): Research Question
+This project investigates whether alcohol-related policies reduce traffic fatalities across U.S. states. Do higher beer taxes reduce traffic fatality rates? We expect that higher beer taxes raises the price of alcohol, and this associated with lower traffic fatality rates. Raising the price of alcohol reduces its consumption, particularly among the price-sensitive groups such as young or low-income drivers who are statistically more likely to drive under the influence. This may also reduce drunk driving incidents and fatalities. 
+This panel data is appropriate because states differ in ways that are difficult to observe or measure but likely affect fatality rates. For example, states vary in their culture, road infrastructure, rural and urban composition, and etc. These factors are largely time-invariant but could bias a simple cross-sectional OLS regression if left uncontrolled. By observing the same 48 states over 7 years, panel data allows us to control for this unobserved state level heterogeneity through fixed or random effects. 
+The data comes from the Fatalities dataset in the AER package, originally sourced from Stock and Watson (2007) and Introduction to Econometrics. It contains U.S. state-level annual observations on traffic fatalities, beer taxes, unemployment, income, and other demographic variables. The dependent variable is fatalrate, this is constructed as the number of traffic fatalities per 10,000 population. 
+The panel consists of N=48 states over T=7 years (1982-1988), and the total observation is 336. The panel is confirmed to be balanced as is.pbalanced(fatalities_pd) = TRUE, which means every state is observed in every year with no missing periods. 
+```{r 1a,echo=FALSE}
+data("Fatalities")
+
+Fatalities$fatalrate <- Fatalities$fatal / Fatalities$pop * 10000
+
+fatalities_pd <- pdata.frame(Fatalities, index = c("state","year"))
+
+# checking for completeness, status and balance
+head(fatalities_pd)
+dim(fatalities_pd)
+is.pbalanced(fatalities_pd)
+
+# Number of states and year
+length(unique(fatalities_pd$state))
+length(unique(fatalities_pd$year))
+
+```
+
+# 1(b): Variable Description
+
+
+```{r 1b.1, echo=FALSE}
+summary(fatalities_pd[,c("fatalrate",
+                         "beertax",
+                         "unemp",
+                         "income",
+                         "youngdrivers",
+                         "miles")])
+```
+This summary statistics table is pooled across 48 states and 7 years with 336 total observations. The fatality rate ranges from 0.82 to the maximum of 4.2 per 10,000 population with a mean of 2.04, indicating substantial variation across states and time. Beer tax shows spread of min=0.04 and max=2.72, suggesting meaningful and successful policy variation across the states. Unemployment ranges widely from 2.4% to 18%, reflecting the business cycle variation across the sample period 1982-1988. Per capita income ranges from $9,514 to $22,193, capturing economic differences across states. Moreover, the proportion of young drivers averages 0.19, ranging from 0.07 to 0.28, while the average miles driven per driver ranges from 4,576 to 26,148, reflecting differences in driving exposure across states. 
+```{r 1b.2, echo=FALSE}
+ggplot(as.data.frame(fatalities_pd),
+       aes(x = fatalrate)) +
+  geom_histogram(bins = 20) +
+  labs(title = "Distribution of Traffic Fatality Rates",
+       x = "Fatality Rate",
+       y = "Frequency")
+```
+Distribution of traffic fatality rates pooled across all 48 states and 7 years with 336 total observations. The distribution is right-skewed, with most observations concentrated between 1.0 and 2.5 fatalities per 10,000 population and a long right tail extending to 4.2. The mean of 2.04 sits to the right of the peak, which is consistent with right skew.This indicates that while most states have relatively moderate fatality rates, a small number of states have persistently higher fatality rates, indicating the presence of state-level heterogeneity that pooled OLS cannot account for,  motivating the use of fixed or random effects.  
+```{r 1b.3, echo=FALSE}
+ggplot(as.data.frame(fatalities_pd),
+       aes(x = beertax,
+           y = fatalrate,
+           colour = factor(state))) +
+  geom_point() +
+  labs(title = "Beer Tax and Traffic Fatality Rates by State",
+       x = "Beer Tax",
+       y = "Fatality Rate")
+```
+Scatter plot of beer tax against traffic fatality rates, with each color representing a different state.The readers should observe two things, first, there is a slight negative relationship between beer tax and fatality rate overall, showing higher taxes may be associated with few fatalities. Second, points of the same color tend to cluster together, indicating that fatality rates differ systematically across states independent of beer tax levels. This pattern of individual heterogeneity motivates the use of fixed or random effects over pooled OLS. 
+```{r 1b.4, echo=FALSE}
+as.data.frame(fatalities_pd) %>%
+  group_by(state) %>%
+  summarise(mean_fatalrate = mean(fatalrate)) %>%
+  ggplot(aes(x = reorder(state, mean_fatalrate),
+             y = mean_fatalrate)) +
+  geom_col() +
+  coord_flip() +
+  labs(title = "Average Traffic Fatality Rate by State",
+       x = "State",
+       y = "Average Fatality Rate")
+```
+Average traffic fatality rate by state over 1982-1988, ordered from lowest to highest.Reader should observe the wide dispersion across states, where New Mexico and Wyoming have average fatality rates exceeding 3.0, while Massachusetts and Rhode Island average below 1.0. This large cross-sectional variation strongly suggest the presence of state-level fixed characteristics such as road infrastructure, rural and urban composition, and driving culture, that are unlikely to be explained by beer tax alone.  This also suggested the use of fixed or random effects over pooled OLS to avoid omitted variable bias. 
+```{r 1b.5, echo=FALSE}
+fatalities_pd %>%
+  group_by(year) %>%
+  summarise(mean_fatalrate = mean(fatalrate)) %>%
+  ggplot(aes(x = year,
+             y = mean_fatalrate,
+             group = 1)) +
+  geom_line() +
+  geom_point() +
+  labs(title = "Average Traffic Fatality Rate Over Time",
+       x = "Year",
+       y = "Average Fatality Rate")
+```
+Average traffic fatality rate across all 48 states from 1982-1988. The reader should observe that fatality rates are not constant over time, they declined sharply from 2.09 in 1982 to a low of 1.97 in 1985, and it rising again through 1988. The non-constant trend over time confirms the presence of time heterogeneity, suggesting that year-specific factors such as national economic conditions or federal highway policies may have influenced fatality rates across all states simultaneously.
+
+# 1(c): Model Justification
+```{r 1c, echo=FALSE}
+fatalrate ~ beertax + unemp + income + youngdrivers + miles
+```
+Before estimating the models, we use `fatalrate` as the dependent variable because the goal is to explain differences in traffic fatality rates across states and over time. The main variable of interest is `beertax`, since our question focuses on whether higher beer taxes are associated with lower traffic fatality rates.
+
+We also include unemployment, income, young drivers, and miles driven as control variables. These variables are included to reduce omitted variable bias because they may affect traffic fatalities for reasons separate from beer taxes. For example, unemployment and income may influence how much people drive or consume alcohol, while young drivers may be more likely to engage in risky driving behavior. Miles driven is included because states with more driving exposure may naturally have higher fatality rates.
+
+This specification is appropriate for panel data because traffic fatality rates may be affected by unobserved state-level factors, such as road quality, law enforcement differences, rural versus urban composition, and attitudes toward drinking and driving. These unobserved differences could bias a simple pooled model if they are correlated with the explanatory variables. For this reason, we estimate pooled, fixed effects, and random effects models before using formal tests to choose the preferred model.
+
+# 1(d): Model Estimation
+```{r 1d pooled OLS, echo=FALSE}
+pool <- plm(fatalrate ~ beertax + unemp +
+              income + youngdrivers + miles,
+            data = fatalities_pd,
+            model = "pooling")
+```
+```{r 1d fe, echo=FALSE}
+fe <- plm(fatalrate ~ beertax + unemp +
+            income + youngdrivers + miles,
+          data = fatalities_pd,
+          model = "within")
+```
+```{r 1d re, echo=FALSE}
+re <- plm(fatalrate ~ beertax + unemp +
+            income + youngdrivers + miles,
+          data = fatalities_pd,
+          model = "random")
+```
+```{r 1d summary, echo=FALSE}
+stargazer(pool, fe, re,
+          type = "text",
+          title = "Pooled OLS, Fixed Effects, and Random Effects Models",
+          column.labels = c("Pooled", "Fixed Effects", "Random Effects"),
+          digits = 3)
+```
+The following models estimate the same specification using three different panel data approaches: pooled OLS, fixed effects, and random effects. Showing the models side-by-side allows us to compare how the estimated relationship between beer taxes and traffic fatality rates changes depending on how the panel structure is treated.
+
+# 1(e): Model Selection and Diagnostics
+When choosing the best model for our research question, we conduct an F-test to determine whether each state has meaningful individual differences that should be accounted for. If these state-specific differences are important, a fixed effects model may be more suitable because it removes stable differences across states and allows us to better interpret the relationship between beer taxes and the fatality rate.
+
+Next, the LM test compares the pooled OLS model with the random effects model. This test helps determine whether there are significant individual state-level differences that pooled OLS ignores. If these differences are present, the random effects model may be more appropriate than pooled OLS.
+```{r 1e Effects Test, echo=FALSE}
+# F-test: pooled vs fixed effects
+pFtest(fe, pool)
+
+# LM test: pooled vs random effects
+plmtest(pool, effect = "individual")
+```
+F-test: The p-value is less than 2.2e-16, so we reject the null hypothesis. This shows that there are meaningful state-specific differences across states that the pooled model ignores. Therefore, the fixed effects model is better than the pooled OLS model.
+
+LM test: The p-value is less than 2.2e-16, so we reject the null hypothesis. This means the random effects model is better than the pooled OLS model, indicating that there are important state-level differences that the pooled model may ignore.
+```{r 1e Hausman Test, echo=FALSE}
+# Hausman test: fixed effects vs random effects
+phtest(fe, re)
+```
+Here, the Hausman test is used to choose between the fixed effects and random effects models. The p-value is 6.401e-11, so we reject the null hypothesis. This indicates that the unobserved state-level differences are correlated with the independent variables, meaning the random effects model would not be reliable.
+
+After the model is selected, the following series of diagnostic tests are performed to determine whether the standard errors from the fixed effects model are trustworthy.
+```{r 1e Diagnostics 1, echo=FALSE}
+# Serial correlation
+pbgtest(fe)
+```
+The p-value is very small, so we reject the null hypothesis of no serial correlation. This suggests that the idiosyncratic errors are serially correlated within states over time. Therefore, later adjustments, such as robust or clustered standard errors, may be required to provide reliable statistical inference.
+```{r 1e Diagnostics 2, echo=FALSE}
+# Durbin-Watson
+pdwtest(fe)
+```
+The DW test result is significant, with a p-value of 0.0121, indicating that a serial correlation problem is present. This means the coefficients’ standard errors may be incorrect.
+```{r 1e Diagnostics 3, echo=FALSE}
+# Heteroskedasticity
+bptest(fe)
+```
+The BP test is used, and the result shows that heteroskedasticity is present. This means the regular standard errors are unreliable, and the p-values and significance tests may be incorrect.
+```{r 1e Diagnostics 4, echo=FALSE}
+# Cross-sectional dependence
+pcdtest(fe, test = "cd")
+```
+Pesaran’s CD test is used to test for cross-sectional dependence. The p-value is 7.029e-13, so we reject the null hypothesis. This means the residuals across states are correlated with each other. If states are affected by common national shocks, conventional standard errors may be too optimistic.
+
+
+
+
+
+
+
+
+
+
+
+Note: Because the diagnostic tests reveal serial correlation, heteroskedasticity, and cross-sectional dependence, conventional standard errors may be unreliable. Therefore, robust standard errors are used for inference in the preferred fixed effects model.
+
+
+```{r 1e Residual plot, echo=FALSE}
+plot(as.numeric(residuals(fe)),
+     xlab = "Observation",
+     ylab = "Residuals",
+     main = "Fixed Effects Residuals")
+
+abline(h = 0)
+```
+The residual plot shows that the fixed effects residuals are generally centered around zero and do not show a strong obvious trend, suggesting that the model fit is reasonable. However, the presence of some outliers and uneven spread suggests possible heteroskedasticity or serial correlation. Therefore, robust clustered standard errors are used.
+```{r 1e robust standard errors, echo=FALSE}
+coeftest(fe,
+         vcov = vcovHC(fe,
+                        type = "HC1",
+                        cluster = "group"))
+```
+# 1(f): Interpretation and Implications
+Unemployment rate and young driver share are statistically significant predictors of fatality rates. Beer tax has a negative coefficient and is marginally significant, but it is not strongly significant at the 5% level. Income and miles are not statistically significant in this model.
+
+The beer tax coefficient shows a negative relationship with the fatality rate. Within a state over time, a one-unit increase in beer tax is associated with a 0.505 decrease in the fatality rate, holding other factors constant. However, because the p-value is 0.0856, this provides only weak evidence.
+
+The unemployment coefficient also shows a negative relationship with the fatality rate. Within a state over time, a 1 percentage-point increase in unemployment is associated with about a 0.039 decrease in the fatality rate. This result is significant at the 1% level. This suggests that when unemployment rises within a state, the fatality rate tends to decrease, possibly because people drive less during weaker economic conditions. Additionally, higher unemployment may reduce disposable income, leading to lower alcohol consumption and therefore fewer alcohol-related traffic incidents.
+
+The young drivers variable is positive and statistically significant. Since youngdrivers is measured as a proportion, a 1 percentage-point increase in the proportion of young drivers (3.899 × 0.01) is associated with about a 0.039 increase in the fatality rate, holding other variables constant. This suggests that within a state over time, a higher share of young drivers is associated with a higher fatality rate.
+
+# Possible Applications
+Since the beer tax coefficient is negative but only marginally significant, the results provide weak evidence that higher beer taxes may reduce traffic fatality rates. Therefore, policymakers should be cautious about using beer taxes as the main policy tool for reducing traffic deaths. Beer taxes may still be useful as part of a broader alcohol-related traffic safety strategy, but the model does not provide strong enough evidence to claim that beer taxes alone would substantially reduce fatalities.
+
+One stronger finding is that a higher share of young drivers is associated with higher fatality rates. This suggests that areas with large young-driver populations may benefit from more targeted enforcement, especially during nighttime and weekend hours when risky driving may be more common. One possible policy implication is more enforcement in areas with many young drivers. Police or transportation departments could focus enforcement near places where young drivers are common, such as college towns, high school areas, nightlife areas, and weekend driving hotspots.
+
+On the other hand, a higher unemployment rate is associated with a lower fatality rate. Since higher unemployment may reduce fatality rates partly by reducing commuting and overall driving, policymakers could look for ways to reduce driving exposure without creating unemployment. For example, hybrid work policies, public transit investment, and carpooling programs could reduce miles driven while avoiding the economic harm of job loss.
+
+The unemployment coefficient also implies that road safety should be improved during economic booms. When unemployment is low and more people are commuting, traffic fatality risks may rise. Policymakers could respond by increasing road safety investments during economic expansions, such as improving infrastructure, expanding transit, and enforcing speed and impaired-driving laws.
+
+# Identification Limitations
+A key limitation is time-varying omitted variables. State fixed effects control for unchanging differences across states, but they do not control for changes over time within states, such as new DUI laws, seatbelt enforcement, road safety campaigns, or changes in policing. For example, if the fatality rate decreases, it could be because DUI enforcement became stricter rather than because of the beer tax effect.
+
+Reverse causality is also possible. States with high fatality rates may be more likely to raise beer taxes or adopt stricter alcohol policies. In that case, the estimated coefficient may not represent the pure causal effect of beer taxes on fatalities. One possible issue is that higher beer taxes may reduce traffic deaths, but states with high traffic deaths may also decide to increase beer taxes.
+
+# Strengthening Causal Claims
+Using an instrumental variable that predicts changes in beer taxes but is not directly related to traffic fatalities would help strengthen the causal claim. For example, using the federal excise tax rate on beer as an instrumental variable may help strengthen causal claims, since federal tax changes are determined at the national level and are therefore plausibly exogenous to individual state fatality trends. If valid, this approach could help isolate the causal effect of beer taxes from other factors.
+
+Using a natural experiment could also help strengthen the causal claim. For example, some states may have increased beer taxes while similar states did not. If fatality rates fell more in the beer-tax states after the policy change compared with states that did not change beer taxes, this would provide stronger evidence that beer taxes reduced traffic fatalities. However, this approach requires the parallel trends assumption to hold. If treatment states were already experiencing declining fatality rates before the tax increase, the estimated effect would be overstated and could not be attributed to the policy itself.
+
+A Hausman-Taylor model could help if we had important variables that are time-invariant or nearly time-invariant, such as alcohol-culture variables. In this case, however, fixed effects remains the more conservative preferred model for estimating the beer tax effect because it controls for all stable state-level characteristics without requiring strong assumptions about whether those culture variables are uncorrelated with remaining unobserved state factors.
+
+# AI Usage log
+1(b). I used Claude to review our work and check whether we had fully addressed all requirements of 1(b). Claude identified that while our graphs demonstrated individual heterogeneity across states, we had not provided evidence of time heterogeneity. It suggested including a time series plot tp show how fatality rates changed over time and better justify the use of panel data methods. 
+
+1(e), I asked ChatGPT to explain the Hausman test and review its application, hypotheses, and result interpretation.
+
+1(f) Similarly, strengthening Causal Claims, before drawing a conclusion about whether the Hausman-Taylor model would be useful for strengthening causal claims, I asked ChatGPT about its application, attributes, and pros and cons.
+ 
+1(f) Coefficient interpretation review, I asked ChatGPT to check the reasoning and logic behind my coefficient interpretations.
+
+AI Reflection: AI was primarily used as a review tool rather than for generating code or completing the analysis. Since we had already completed the coding ourselves, Claude's role was to help identify any missing elements in our interpretation and presentation, while ChatGPT was used to review econometric tests, model applications, and coefficient interpretations. 
+After completing the coding and analysis ourselves in 1(b), I asked Claude, "Do all of our current graphs clearly show our modeling decisions and individual or time heterogeneity?" Claude responded that while our graphs provided evidence of individual heterogeneity across states, but not time heterogeneity. This feedback helped us recognize that a time series plot was needed to show how fatality rates changed over time and this can fully shows the use of panel data methods. After reviewing the project requirements ourselves, we agreed with this critique and added the plot to complete the analysis. 
+All questions that we asked for 1(e) and (f) regarding test review and model applications were answered correctly. ChatGPT provided helpful explanations of the Hausman test, including its application, hypotheses, and interpretation of results. It also accurately explained the purpose, advantages, and limitations of the Hausman-Taylor model, which helped inform our discussion of whether the model could strengthen causal claims.
+However, AI was not always correct. In 1(f), where we asked ChatGPT to check our coefficient interpretations, it initially marked a portion of the interpretation as incorrect. It later turned out that it had drawn the wrong conclusion because it lacked the correct unit specifications for the variable.
