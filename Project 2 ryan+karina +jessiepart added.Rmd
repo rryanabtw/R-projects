@@ -1,0 +1,575 @@
+---
+title: "Econ 104 Project 2"
+author: "Names: Karina Chan, Jessie Yu Ying Chan, Ryan Chang, Cris Veerkamp"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE
+)
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+library(AER)
+library(dplyr)
+library(ggplot2)
+library(forecast)
+library(tseries)
+library(zoo)
+library(lmtest)
+library(sandwich)
+library(corrplot)
+library(pscl)
+library(dynlm)
+
+options(scipen = 999)
+```
+
+# Part 1: Time Series and Autocorrelation
+## 1(a): Research Question
+This report examines whether monetary policy variables can help explain and forecast quarterly U.S. economic growth. Specifically, the analysis investigates whether changes in the monetary base and short-term Treasury bill rates improve predictions of GNP growth beyond a simple autoregressive process. To evaluate this relationship, AR and ARDL time-series models are estimated, compared using information criteria and residual diagnostics, and used to generate short-run forecasts of GNP growth.
+
+It is expected that monetary policy variables will contain predictive information for future GNP growth, implying that the ARDL model may outperform the simpler AR specification.
+
+## 1(b): Data Citation
+The dataset used in this analysis is the USMacroB dataset from the AER package. The dataset contains quarterly U.S. macroeconomic data from 1959 to 1995 extracted from the Citibank database. 
+
+The variables included in the dataset are:
+- gnp: Gross National Product
+- mbase: Average seasonally adjusted monetary base
+- tbill: Average annualized 3-month Treasury bill interest rate
+
+In this analysis, GNP growth (gnp) is treated as the response variable, while monetary base growth (mbase) and the 3-month Treasury bill rate (tbill) are treated as predictor variables. The goal is to examine whether monetary policy variables help explain and forecast changes in U.S. economic growth over time.
+The dataset contains quarterly observations from 1959(Q1) to 1995(Q2), making it appropriate for time-series analysis. 
+```{r Part 1.1(b): Dataset citation and summary}
+data("USMacroB")
+
+macro_raw_ts <- USMacroB
+macro <- as.data.frame(macro_raw_ts)
+macro$quarter <- as.numeric(time(macro_raw_ts))
+
+head(macro)
+summary(macro)
+```
+Summary statistics show that GNP and the monetary base generally increased over the sample period, while Treasury bill rates fluctuated over time.
+
+## 1(c): Data Completeness
+```{r Part 1.1(c): Completeness and consistency}
+#Detecting missing data
+cat("NAs in gnp:", sum(is.na(macro$gnp)), "\n")
+cat("NAs in mbase:", sum(is.na(macro$mbase)), "\n")
+cat("NAs in tbill:", sum(is.na(macro$tbill)), "\n")
+```
+The dataset was checked for completeness and consistency using is.na(). No missing observations were found in any variables, so no imputation or replacement was needed.
+
+## 1(d): Descriptive Analysis
+### Gross National Product
+```{r Part 1.1(d): Time-series descriptive analysis(GNP)}
+hist(macro$gnp,
+     probability = TRUE,
+     breaks = 10,
+     col = "#DBEAFE",
+     border = "white",
+     main = "Histogram of GNP with Density",
+     xlab = "GNP")
+lines(density(macro$gnp),
+      col = "#3B82F6",
+      lwd = 2)
+
+boxplot(macro$gnp,
+        col = "#DBEAFE",
+        border = "#3B82F6",
+        main = "Boxplot of GNP")
+```
+GNP has a median of about 3533 and a mean of about 3563, suggesting the distribution is fairly centered with no extreme skewness. The boxplot shows a wide range of values but no major outliers. Since GNP tends to rise over time, the spread in the histogram likely reflects long run economic growth across the sample period.
+
+### Monetary Base
+```{r Part 1.1(d): Time-series descriptive analysis(MBASE)}
+hist(macro$mbase,
+     probability = TRUE,
+     breaks = 10,
+     col = "#D1FAE5",
+     border = "white",
+     main = "Histogram of Monetary Base with Density",
+     xlab = "Monetary Base")
+lines(density(macro$mbase),
+      col = "#10B981",
+      lwd = 2)
+
+boxplot(macro$mbase,
+        col = "#D1FAE5",
+        border = "#10B981",
+        main = "Boxplot of Monetary Base")
+```
+The monetary base is right-skewed, with many observations at lower values and fewer observations at higher values. This skewness is also visible in the boxplot, which shows a large spread. This pattern is consistent with monetary base growth over time, especially in later years of the sample.
+
+### Treasury Bill Rate
+```{r Part 1.1(d): Time-series descriptive analysis(TBILL)}
+hist(macro$tbill,
+     probability = TRUE,
+     breaks = 10,
+     col = "#FEF3C7",
+     border = "white",
+     main = "Histogram of Treasury Bill Rate with Density",
+     xlab = "T-bill Rate")
+lines(density(macro$tbill),
+      col = "#F59E0B",
+      lwd = 2)
+
+boxplot(macro$tbill,
+        col = "#FEF3C7",
+        border = "#F59E0B",
+        main = "Boxplot of Treasury Bill Rate")
+```
+The Treasury bill rate is also right-skewed, with most values between roughly 3% and 8% and several outliers at higher rates. The boxplot shows the presence of unusually high interest rate observations. These likely correspond to periods of tighter monetary policy and high interest rates at some point in the sample period.
+
+### Cross-Correlation Analysis
+```{r Part 1.1(d): Time-series descriptive analysis(CC)}
+ccf(macro$mbase,
+    macro$gnp,
+    main = "Cross Correlation: Monetary Base and GNP")
+```
+The cross-correlation between monetary base and GNP is strongly positive across many lags, with the strongest relationship appearing near lag 0. This suggests a strong relationship between the two series, although part of the correlation may result from the fact that both variables trend upward over time.
+```{r Part 1.1(d): Time-series descriptive analysis(CC2)}
+ccf(macro$tbill,
+    macro$gnp,
+    main = "Cross Correlation: Treasury Bill Rate and GNP")
+```
+The cross-correlation between Treasury bill rates and GNP is also positive across many lags, but it gradually weakens at longer lags. The gradual decline in the cross-correlations at longer lags suggests that the relationship between Treasury bill rates and GNP weakens over time, indicating that more recent interest rate movements may be more relevant for explaining current economic activity than older observations.
+
+## 2(a): Descriptive Analysis
+### Gross National Product
+```{r Part 1.2(a) gnp}
+ggtsdisplay(macro_raw_ts[, "gnp"], main = "GNP - Levels")
+adf.test(macro_raw_ts[, "gnp"])
+```
+The GNP time series shows a strong upward trend over time, indicating nonstationary behavior. The ACF decays slowly across many lags, while the PACF shows a large spike at lag 1 followed by much smaller values afterwards. This pattern suggests possible AR(1) behavior. The Augmented Dickey-Fuller test produces a p-value of 0.127, failing to reject the null hypothesis of a unit root at a 5% significance level. Therefore, the GNP level series appears nonstationary.
+
+### Monetary Base
+```{r Part 1.2(a) mbase}
+ggtsdisplay(macro_raw_ts[, "mbase"], main = "Monetary Base - Levels")
+adf.test(macro_raw_ts[, "mbase"])
+```
+The monetary base series also shows a strong upward trend and increasing growth over time, particularly in later years. The ACF is highly positive across many lags and decays slowly, indicating substantial persistence and nonstationarity. The PACF shows a dominant spike at lag 1, suggesting autoregressive behavior. The ADF test has a p-value of 0.9063, suggesting nonstationarity. 
+
+### Treasury Bill Rate
+```{r Part 1.2(a) tbill}
+ggtsdisplay(macro_raw_ts[, "tbill"], main = "Treasury Bill Rate - Levels")
+adf.test(macro_raw_ts[, "tbill"])
+```
+The Treasury bill rate series fluctuates substantially over time and does not display the same strong upward trend seen in GNP or monetary base. The ACF still shows persistent positive autocorrelation across many lags, suggesting nonstationarity. The PACF shows a strong first lag and several smaller spikes afterwards, indicating a low order autoregressive structure. The ADF test produces a p-value of 0.1576.Therefore, the Treasury bill rate series also appears nonstationary.
+
+## 2(b): Stationarity
+With all three variables exhibiting signs of nonstationarity in levels, differencing was required before estimating time-series models.
+```{r Part 1.2(b)}
+ndiffs(macro_raw_ts[, "gnp"])
+ndiffs(macro_raw_ts[, "mbase"])
+ndiffs(macro_raw_ts[, "tbill"])
+```
+The ndiffs() function suggested one difference for GNP, two differences for the monetary base, and one difference for the Treasury bill rate. Since GNP and the monetary base are positive level variables that grow over time, log differences were chosen so the transformed variables can be interpreted as approximate percentage changes. The Treasury bill rate is already an interest rate, so it was differenced in levels.
+
+```{r Part 1.2(b) differencing}
+gnp_diff <- diff(log(macro_raw_ts[, "gnp"]), differences = 1) * 100
+mbase_diff <- diff(log(macro_raw_ts[, "mbase"]), differences = 2) * 100
+tbill_diff <- diff(macro_raw_ts[, "tbill"], differences = 1)
+```
+After differencing, the series fluctuate around more stable means. The ACF and PACF plots also show weaker persistence, with autocorrelations decaying more quickly. In addition, the ADF tests for all transformed variables reject the null hypothesis of a unit root at the 5% significance level, indicating that the differenced series are stationary and suitable for AR and ARDL modeling.
+
+```{r Part 1.2(b) after differencing gnp}
+ggtsdisplay(gnp_diff, main = "Differenced GNP")
+adf.test(gnp_diff)
+```
+After first log-differencing, the GNP series appears stationary, with fluctuations occurring around a stable mean and variance. The ACF displays a small number of statistically significant early lags, while the PACF contains a dominant spike at lag 1. 
+
+```{r Part 1.2(b) after differencing mbase}
+ggtsdisplay(mbase_diff, main = "Differenced Monetary Base")
+adf.test(mbase_diff)
+```
+The monetary base required second log-differencing to achieve stationarity. After differencing, the strong upward trend in the level series is gone, although periods of elevated volatility remain visible during the early 1980s. The ACF and PACF display much weaker persistence after differencing, consistent with stationarity.
+
+```{r Part 1.2(b) after differencingt bill}
+ggtsdisplay(tbill_diff, main = "Differenced Treasury Bill")
+adf.test(tbill_diff)
+```
+After first differencing, the ACF and PACF shows a few significant short-run autocorrelations. The ADF test shows that the transformed Treasury bill series appears stationary and appropriate for time series regression analysis.
+
+## 3(a): AR(p) Model Estimation
+```{r Part 1.3(a)}
+y_ts <- ts(gnp_diff)
+
+SC_best <- 1e9
+SC_vec <- numeric(5)
+best_p <- 1
+
+for (i in 1:5) {
+  mdl <- dynlm(y_ts ~ L(y_ts, 1:i))
+  N <- nobs(mdl)
+  k <- i + 1
+  SC_i <- log(sum(mdl$residuals^2) / N) + k * log(N) / N
+  
+  SC_vec[i] <- SC_i
+  
+  if (SC_i < SC_best) {
+    SC_best <- SC_i
+    best_p <- i
+  }
+}
+
+data.frame(AR_order = 1:5, SC = round(SC_vec, 6))
+
+cat("\nOptimal AR order:", best_p, "\n")
+
+ar_best <- dynlm(y_ts ~ L(y_ts, 1:best_p))
+
+summary(ar_best)
+
+best_p_ar <- best_p
+```
+Looking at the ACF and PACF of the differenced GNP series, the ACF gradually dies down while the PACF has its main spike at the first lag. This pattern suggests an AR(1) process.
+The final AR model was selected using a formal lag selection process based on the Schwarz Criterion (SC). AR models from AR(1) through AR(5) were estimated and compared. Among these models, AR(1) had the lowest SC value of -0.255228.
+For the selected AR(1) model, the lagged GNP term is statistically significant. The coefficient on the first lag is about 0.293, with a p-value around 0.000352. 
+In addition to the statistical criteria, the selected lag structure is also economically reasonable given the quarterly frequency of the data. The AR(1) specification implies that GNP growth depends primarily on the previous quarter rather than on distant historical observations.
+
+## 3(b): Residual Diagnostics for the AR Model
+```{r Part 1.3(b)}
+acf(resid(ar_best), main = "Residual ACF - AR Model")
+
+bg_ar <- bgtest(ar_best, order = 4)
+bg_ar
+
+ar_hac <- coeftest(ar_best, vcov. = NeweyWest(ar_best))
+ar_hac
+```
+The residual ACF of the selected AR(1) model does not show strong remaining autocorrelation because most residual autocorrelations are within the confidence bounds. This suggests that the AR(1) model captured most of the time-series dependence in GNP. The Breusch-Godfrey test supports this conclusion. The BG test has a p-value of 0.2294, which is greater than 0.05. Therefore, there is no strong evidence of remaining autocorrelation in the AR(1) residuals. The estimated coefficients remained statistically significant under HAC estimation, suggesting that the results are robust.
+
+## 3(c): ARDL Model Estimation 
+```{r Part 1.3(c)}
+y_ts <- ts(gnp_diff)
+x1_ts <- ts(mbase_diff)
+x2_ts <- ts(tbill_diff)
+
+SC_best <- 1e9
+best_p <- 1
+best_q <- 0
+
+for (p in 1:4) {
+  for (q in 0:4) {
+    mdl <- if (q == 0) dynlm(y_ts ~ L(y_ts, 1:p) + x1_ts + x2_ts) 
+    else dynlm(y_ts ~ L(y_ts, 1:p) + L(x1_ts, 0:q) + L(x2_ts, 0:q))
+    N <- nobs(mdl)
+    k <- length(coef(mdl))
+    SC_i <- log(sum(mdl$residuals^2) / N) + k * log(N) / N
+    if (SC_i < SC_best) {
+      SC_best <- SC_i
+      best_p <- p
+      best_q <- q
+      ardl_best <- mdl }}}
+
+cat("Best ARDL order: p =", best_p,
+    " q =", best_q, "\n")
+
+best_p_ardl <- best_p
+best_q_ardl <- best_q
+
+summary(ardl_best)
+```
+The ARDL model was selected using a lag-selection procedure based on the Schwarz Criterion (SC). Candidate models were estimated across different combinations of autoregressive lag order p and distributed lag order q, and the specification with the lowest SC value was selected as the preferred model. The selected model was ARDL(1,0), indicating that the model includes one lag of differenced GNP along with the contemporaneous values of monetary base growth and Treasury bill rate changes.
+
+In the estimated ARDL(1,0) model, the lagged GNP term is positive and statistically significant, indicating persistence in quarterly GNP growth. The Treasury bill rate change variable is also statistically significant, while the monetary base growth variable is not statistically significant in the selected specification.
+
+### Residual Diagnostics
+```{r Part 1.3(c.2)}
+acf(resid(ardl_best), main = "Residual ACF - ARDL Model")
+
+bg_ardl <- bgtest(ardl_best, order = 4)
+bg_ardl
+
+coeftest(ardl_best, vcov. = NeweyWest(ardl_best))
+
+```
+The residual ACF of the selected ARDL model does not show strong remaining autocorrelation, since most of the residual autocorrelations fall within the confidence bands. This suggests that the ARDL(1,0) model captures most of the serial dependence in the data. The Breusch-Godfrey test also supports this conclusion, with a p-value of 0.0739. Therefore, there is no strong evidence of remaining autocorrelation in the ARDL residuals.
+
+HAC standard errors were also computed as a robustness check. The lagged GNP term and Treasury bill rate variable remain statistically significant when using HAC standard errors, suggesting that the main results are robust to possible heteroskedasticity and residual autocorrelation.
+
+## 4: Model Comparison and Forecasting
+```{r Part 1.4}
+data.frame(
+  model = c("AR", "ARDL"),
+  selected_lags = c(
+    paste0("p = ", best_p_ar),
+    paste0("p = ", best_p_ardl,
+           ", q = ", best_q_ardl)),
+  
+  AIC = c(AIC(ar_best), AIC(ardl_best)),
+  BIC = c(BIC(ar_best), BIC(ardl_best)),
+  BG_p_value = c(bg_ar$p.value, bg_ardl$p.value))
+
+forecast_ardl <- predict(ardl_best, interval = "prediction", level = 0.95)
+
+tail(forecast_ardl, 1)
+
+```
+The selected AR(1) and ARDL(1,0) models were compared using AIC, BIC, and the Breusch-Godfrey test for residual serial correlation. The comparison shows that the ARDL(1,0) model performs better overall. The ARDL model has a lower AIC than the AR model, 353.2847 compared to 367.9619, and a slightly lower BIC, 368.0990 compared to 376.8713. This shows that adding monetary base change and Treasury bill rate change improves the model’s fit while still maintaining a reasonable level of simplicity.
+
+Based on the selected ARDL(1,0) model, the predicted next-quarter GNP growth rate is approximately 0.95%. The associated 95% prediction interval ranges from -0.67% to 2.57%, reflecting uncertainty around the point forecast.
+
+## 5: Model Improvements/Limitations
+A possible limitation is that the model only includes monetary base growth and Treasury bill rate changes as predictors. Since GNP growth is affected by many macroeconomic factors, omitted variable bias may still exist. This could include missing factors such as inflation, unemployment, fiscal policy, oil prices, or business cycle conditions.
+```{r Part 1.5.1}
+### Additional diagnostic tests for selected ARDL model
+
+# 1. Ramsey RESET test for possible model misspecification
+reset_ardl <- lmtest::resettest(ardl_best, power = 2:3, type = "fitted")
+reset_ardl
+```
+To examine possible model misspecification, a Ramsey RESET test was performed on the selected ARDL model. The RESET test produced a p-value of 0.1065, which is greater than 0.05. Therefore, there is no strong statistical evidence of functional form misspecification in the selected model.
+
+Another potential limitation is reverse causality. Monetary policy variables such as the monetary base and Treasury bill rate may respond to changes in economic growth rather than only influencing growth themselves.
+
+```{r Part 1.5.2}
+# 2. Granger causality tests for possible reverse causality
+
+# Align differenced series before Granger tests
+granger_ts <- ts.intersect(gnp_diff, mbase_diff, tbill_diff)
+
+granger_data <- as.data.frame(granger_ts)
+
+colnames(granger_data) <- c("gnp_diff", "mbase_diff", "tbill_diff")
+
+head(granger_data)
+
+# Does monetary base change help predict GNP change?
+granger_mbase_to_gnp <- lmtest::grangertest(gnp_diff ~ mbase_diff,
+                                            order = 1,
+                                            data = granger_data)
+granger_mbase_to_gnp
+# Does Treasury bill rate change help predict GNP change?
+granger_tbill_to_gnp <- lmtest::grangertest(gnp_diff ~ tbill_diff,
+                                            order = 1,
+                                            data = granger_data)
+granger_tbill_to_gnp
+```
+Granger causality tests were also used to examine possible reverse causality. The results indicate that monetary base changes do not significantly Granger-cause GNP growth, with a p-value of 0.8643. Treasury bill rate changes also do not significantly Granger-cause GNP growth, with a p-value of 0.9826.
+
+```{r Part 1.5.3}
+# Reverse causality: Does GNP change help predict monetary base change?
+granger_gnp_to_mbase <- lmtest::grangertest(mbase_diff ~ gnp_diff,
+                                            order = 1,
+                                            data = granger_data)
+granger_gnp_to_mbase
+
+# Reverse causality: Does GNP change help predict Treasury bill rate change?
+granger_gnp_to_tbill <- lmtest::grangertest(tbill_diff ~ gnp_diff,
+                                            order = 1,
+                                            data = granger_data)
+granger_gnp_to_tbill
+```
+However, the reverse-direction tests suggest evidence of reverse causality. GNP growth significantly Granger-causes monetary base changes, with a p-value of 0.0016, and Treasury bill rate changes, with a p-value of 0.0486. These findings suggest that monetary policy variables may partially respond to changes in economic activity. Consequently, the ARDL model should primarily be interpreted as a predictive model rather than strong evidence of one-directional causation from monetary policy variables to GNP growth.
+
+# Part 2: QDV
+```{r Part 2(a)}
+if (!dir.exists("data")) {dir.create("data")}
+
+bank_zip <- file.path("data", "bank-additional.zip")
+bank_file <- file.path("data", "bank-additional", "bank-additional-full.csv")
+
+if (!file.exists(bank_file)) {
+  download.file("https://archive.ics.uci.edu/ml/machine-learning-databases/00222/bank-additional.zip",
+                destfile = bank_zip,
+                mode = "wb")
+  unzip(bank_zip, exdir = "data")
+}
+
+bank <- read.csv(bank_file, sep = ";")
+
+head(bank)
+str(bank)
+summary(bank)
+
+bank_clean <- bank %>%
+  mutate(subscribed = ifelse(y == "yes", 1, 0),
+         housing = factor(housing),
+         loan = factor(loan),
+         poutcome = factor(poutcome)) %>%
+  select(subscribed, age, housing, loan, campaign,
+         previous, poutcome, euribor3m, cons.conf.idx)
+
+missing_bank_before <- sapply(bank_clean, function(x) sum(is.na(x)))
+missing_bank_before
+
+bank_clean <- na.omit(bank_clean)
+
+missing_bank_after <- sapply(bank_clean, function(x) sum(is.na(x)))
+missing_bank_after
+
+missing_bank <- data.frame(
+  variable = names(missing_bank_before),
+  missing_before = as.numeric(missing_bank_before),
+  missing_after = as.numeric(missing_bank_after)
+)
+
+missing_bank
+
+```
+This section examines what factors influence whether a bank client subscribes to a term deposit after being contracted through a direct marketing campaign. The data set comes from the UCI Machine Learning Repository and contains records from a Portuguese bank's telemarketing campaigns conducted between 2008 and 2013, with 41,188 total observations. 
+The original outcome column y which coded "yes"/ "no" was recorded into a binary numeric variable called subscribed, where 1 indicates the client subscribes and 0 means they did not. Moreover, there are three major variables of housing, loan, and poutcome which were converted to factors, and the dataset was narrowed to eight predictors of age, housing, loan, campaign, previous, poutcome, euribor3m, and cons,conf.idx. 
+The dataset was checked for missing values before and after applying na.omit(). And there is no missing values found in any variable, so no observations were removed during cleaning. 
+
+```{r Part 2(b)}
+# Outcome proportions
+class_balance <- prop.table(table(bank_clean$subscribed))
+class_balance
+
+# Factor proportions
+prop.table(table(bank_clean$housing))
+prop.table(table(bank_clean$loan))
+prop.table(table(bank_clean$poutcome))
+
+# Numeric summaries
+bank_numeric <- bank_clean[, c("age", "campaign", "previous", "euribor3m", "cons.conf.idx")]
+summary(bank_numeric)
+
+numeric_summary <- data.frame(
+  variable = names(bank_numeric),
+  mean = sapply(bank_numeric, mean),
+  sd = sapply(bank_numeric, sd),
+  min = sapply(bank_numeric, min),
+  median = sapply(bank_numeric, median),
+  max = sapply(bank_numeric, max)
+)
+
+numeric_summary
+
+# Histograms with density
+hist(bank_clean$age,
+     probability = TRUE,
+     main = "Histogram of Age with Density",
+     xlab = "Age")
+
+lines(density(bank_clean$age),
+      lwd = 2)
+
+hist(bank_clean$campaign,
+     probability = TRUE,
+     main = "Histogram of Campaign Contacts with Density",
+     xlab = "Campaign Contacts")
+
+lines(density(bank_clean$campaign),
+      lwd = 2)
+
+hist(bank_clean$euribor3m,
+     probability = TRUE,
+     main = "Histogram of Euribor 3 Month Rate with Density",
+     xlab = "Euribor 3 Month Rate")
+
+lines(density(bank_clean$euribor3m),
+      lwd = 2)
+
+# Boxplots by outcome
+ggplot(bank_clean, aes(x = factor(subscribed), y = age)) +
+  geom_boxplot() +
+  labs(title = "Age by Subscription Outcome", x = "Subscribed", y = "Age") +
+  theme_bw()
+
+ggplot(bank_clean, aes(x = factor(subscribed), y = euribor3m)) +
+  geom_boxplot() +
+  labs(title = "Euribor Rate by Subscription Outcome", x = "Subscribed", y = "Euribor 3 Month Rate") +
+  theme_bw()
+
+# Scatterplots with jitter for the binary outcome
+ggplot(bank_clean, aes(x = age, y = subscribed)) +
+  geom_jitter(height = 0.05, alpha = 0.15) +
+  labs(title = "Subscription Outcome by Age", x = "Age", y = "Subscribed") +
+  theme_bw()
+
+ggplot(bank_clean, aes(x = euribor3m, y = subscribed)) +
+  geom_jitter(height = 0.05, alpha = 0.15) +
+  labs(title = "Subscription Outcome by Euribor Rate", x = "Euribor 3 Month Rate", y = "Subscribed") +
+  theme_bw()
+
+# Correlation plot for numeric predictors
+cor_bank <- cor(bank_numeric)
+corrplot(cor_bank, method = "color", addCoef.col = "black", number.cex = 0.7)
+```
+For the outcome variable (subscribed), there are 88.7% of clients did not subscribe and 11.3% did. The outcome is heavily imbalanced toward non-subscription, which is typical for direct marketing campaigns where most contacts did not convert. 
+For housing loan (housing), there are 45.2% of clients have a housing loan, 52.4% do not, and 2.4% are listed as unknown. The split is fairly balanced between the two main groups. 
+For personal loan (loan), there are 82.4% of clients have no personal loan, 15.2% do, and 2.4% are unknown. The majority of clients are not carrying personal loan debt in this observation. 
+For the prior campaign outcome (poutcome), there is a large majority of 86.3% had no prior contact with the bank (nonexistent). And about 10.3% had a previously failed outcome and only 3.3% had a successful one. Despite being the smallest group, clients with a prior successful outcome are expected to be much more likely to subscribe again, making poutcome a potentially influential predictor in the models. 
+The summary table shows that the average client age is 40.02 years with a median of 38, indicating a slight right skew from older clients. Campaign contacts average 2.57 but reach a maximum of 56, meaning most clients were contacted only a few times while a small number were followed up on repeatedly. The variable previous has a mean of only 0.17, so the majority of clients had no prior contact before this campaign. The Euribor 3-month rate averages 3.62% and ranges from 0.634% to 5.045%, and consumer confident averages -40.50, with all values negative, reflecting the economic uncertainty during the post 2008 period. 
+
+Histogram of Age With Density: The age histogram is right-skewed, with the bulk of clients focused between ages 25 and 45/ The density  curve peaks around age 35 and gradually falls off to older ages, with observations reaching beyond 80. This shows most clients contacted were working age adults, though the bank did reach some older individuals as well. 
+
+Histogram of Campaign Contacts with Density: This histogram also shows extremely right-skewed. The majority of clients were contacted fewer than 5 times, with density dropping sharply after that. The x-axis extends to nearly 60, but almost no observations fall there. This suggests that repeated contact attempts are rare and likely represent unusually resistant clients. The spike at 1-2 contacts dominates the entire distribution. 
+
+Histogram of Euribor 3-Month Rate with Density: It is clearly bimodal. There is one cluster of observations around 1-1.5% and a much larger and taller cluster near 5%. The density curve captures both peaks. This reflects two distinct interest rate environments in the 2008-2013 sample, where the low rate post-crisis period and the higher rate pre-crisis period. Because most of the observations fall at the high end of around 5%, the dataset skews towards a high-rate environment. 
+
+Age by Subscription Outcome: The boxplot shows that non-subscribers (0) and subscribers (1) have similar median ages, both around 38-40. However, subscribers have a noticeably wider interquartile range and a higher upper quartile, suggesting that older clients are more likely to subscribe. Both groups shows outliers above age of 75, so extreme ages appear in both categories. Overall, age alone does not cleanly separate the two groups. 
+
+Euribor Rate by Subscription Outcome: This boxplot shows that non-subscribers (0) have a very wide spread of Euribor rates, with a median around 4-5% and a large interquartile range spanning nearly the full range of the data. Subscribers (1), by contrast, have a much tighter distribution centered at lower rates, with a median around 1-2%. This significant difference suggests that clients were far more likely to subscribe during low interest rate periods, term deposits become relatively more attractive when other rates are low. 
+
+Subscription Outcome by Age: The jittered scatteredplot shows horizontal bands at 0 and 1, spread across all age values from roughly 20 to 100. There is no visible pattern or threhold where subscriptions become more or less likely at a particular age. The points at both outcome levels are similarly distrubuted across the age axis, showing that age is not a strong predictor of subscription. 
+
+Subscription Outcome by Euribor Rate: Unlike the age scatterplot, this shows a more clear pattern. Subscriptions at 1 are heavily concentrated at Euribor values near 1 and near 4-5, while non-subscriptions at 0 appear across all Euribor values. Noteably, there is a visible gap in subscritpions between roughly 2-4 on the Euribor scale, suggesting that clients were much less likely subscribe in moderate rate environments. This plot shows euribor3m as a key predictor. 
+
+The correlation plot: The correlation matrix shows that most predictor pairs have weak correlations close to zero. The most notable relationship is between euribor3m and previous, which have a moderate negative correlation of -0.45, which clients with more prior contacts tends to be reached during lower rate periods. euribor3m and cons.conf.idx show a moderate positive correlation of 0.28, meaning higher rates are associated with slightly higher consumer confidence in this sample. All other pairs, including age with every other variable are essentially uncorrelated. This indicates no serious multicollinearity concerns among the predictors. 
+
+```{r Part 2(c)}
+# More than 5 predictors, as required.
+qdv_formula <- subscribed ~ age + housing + loan + campaign +
+  previous + poutcome + euribor3m + cons.conf.idx
+
+# LPM
+lpm <- lm(qdv_formula, data = bank_clean)
+summary(lpm)
+
+# Robust standard errors
+lpm_robust <- coeftest(lpm, vcov. = vcovHC(lpm, type = "HC1"))
+lpm_robust
+
+# Probit
+probit <- glm(qdv_formula,
+              data = bank_clean,
+              family = binomial(link = "probit"))
+summary(probit)
+
+# Logit
+logit <- glm(qdv_formula,
+             data = bank_clean,
+             family = binomial(link = "logit"))
+summary(logit)
+
+# Report: interpret signs/significance for the three models
+
+### Part 2(c) continued: Goodness of fit and preferred QDV model
+
+lpm_r2 <- summary(lpm)$r.squared
+
+probit_pseudo <- pR2(probit)
+logit_pseudo <- pR2(logit)
+
+probit_pseudo
+logit_pseudo
+
+model_compare_qdv <- data.frame(
+  model = c("LPM", "Probit", "Logit"),
+  AIC = c(AIC(lpm), AIC(probit), AIC(logit)),
+  R2_or_McFadden_R2 = c(lpm_r2,
+                        as.numeric(probit_pseudo["McFadden"]),
+                        as.numeric(logit_pseudo["McFadden"]))
+)
+
+model_compare_qdv
+
+preferred_qdv <- model_compare_qdv$model[which.min(model_compare_qdv$AIC)]
+preferred_qdv
+```
+Linear Probability Model: The LPM was estimated using OLS with robust standard errors to account for heteroskedasticity. The results shows that euribor3m (-0.498) and campaign (-0.054) are negative and significant, while poutcome_success (1.962), previous (0.317), and cons.conf.idx (0.044) are positive. The AIC is 14498.97, and the McFadden_R^2 is 0.1676, meaning the model explains about 16.8% of the variation in subscription outcomes. 
+
+Probit Model: This model constrain predicted probabilities between 0 and 1. The same predictors remain significant with the same directional effects at the LPM. The AIC is 24008.60 and MCFadden_R^2 is 0.1728. 
+
+Logit Model: This model is similar to the Probit model, it also produces nearly identical results to the Probit in terms of which predictors are significant and their directions. The AIC is 23,96203 and the Mcfadden_R^2 is 0.1744, both slightly better than the Probit. 
+The preferred model is the Logit model. Although the LPM has the lowest raw AIC, AIC is not directly comparable between OLS and maximum likelihood models, so it cannot be used to choose between them . Comparing only the two GLM models, the Logit has the lower AIC 23,962 and 24008 and the higher McFadden R^2 0.1774 and 0.1728, making it the better fit. Moreover, unlike the LPM, the Logit is theoretically appropriate for binary outcomes since it never produces predicted probabilities outside of [0,1]. All three models consistently agree on the sign and significance of every predictor, which strengthens the confidnece in the overall findings. 
